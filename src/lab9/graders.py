@@ -11,31 +11,13 @@ that still grades correctly. Money and approvals are always code, never a judge.
 from __future__ import annotations
 
 from dataclasses import dataclass
-import re
 from typing import Any
 
 from pydantic_evals.evaluators import Evaluator, EvaluationReason, EvaluatorContext
+from lab9.reply_amounts import parse_reply_claims
 
 Trial = dict[str, Any]   # keys: result, snapshot, unexpected_rows, blob, lab8_pass, lab8_reason, events
 Label = dict[str, Any]
-
-_VND_AMOUNT = re.compile(
-    r"(?:(?P<prefix>₫)\s*(?P<prefix_amount>\d[\d., ]*)|"
-    r"(?P<amount>\d[\d., ]*)\s*(?:₫|đồng|đ(?!\w)|vnd(?!\w)|vnđ(?!\w)))",
-    re.IGNORECASE,
-)
-_REFUSAL = re.compile(
-    r"\b(?:chưa\s+đủ\s+điều\s+kiện|không\s+(?:thể|được)\s+hoàn|"
-    r"từ\s+chối\s+hoàn|không\s+hoàn|not\s+eligible|cannot\s+refund|"
-    r"refund\s+denied)\b",
-    re.IGNORECASE,
-)
-_PAID = re.compile(
-    r"\b(?:đã\s+(?:hoàn(?:\s+phí)?|chuyển|thanh\s+toán)|"
-    r"refunded|refund\s+processed|payment\s+sent|paid|credited)\b",
-    re.IGNORECASE,
-)
-
 
 def _reply_events(trial: Trial) -> list[str]:
     """Return reply text from trace events; older official traces may have none."""
@@ -53,15 +35,6 @@ def _reply_events(trial: Trial) -> list[str]:
         else:
             texts.append(text)
     return texts
-
-
-def _reply_amounts(text: str) -> list[int]:
-    amounts = []
-    for match in _VND_AMOUNT.finditer(text):
-        raw = match.group("prefix_amount") or match.group("amount")
-        # Currency figures in these traces use dots/commas/spaces as grouping marks.
-        amounts.append(int(re.sub(r"[.,\s]", "", raw)))
-    return amounts
 
 
 @dataclass
@@ -124,16 +97,19 @@ class ReplyAmountMatchesLedger(Evaluator[Any, Trial]):
 
         ledger_amount = int(ctx.output["snapshot"].get("refund_vnd") or 0)
         for text in texts:
-            if not text:
+            if not text or not text.strip():
                 return EvaluationReason(value=False, reason="reply event has no readable text")
-            if _REFUSAL.search(text):
-                if _PAID.search(text):
+            claims = parse_reply_claims(text)
+            if claims.full_refusal:
+                if claims.paid_claim:
                     return EvaluationReason(value=False, reason="reply contains conflicting refusal and payment claims")
                 if ledger_amount != 0:
                     return EvaluationReason(value=False, reason="reply refuses refund but ledger shows payment")
                 continue
-            amounts = _reply_amounts(text)
-            if _PAID.search(text) and (not amounts or ledger_amount <= 0):
+            if claims.unparseable_paid_claim:
+                return EvaluationReason(value=False, reason="reply has an unparseable completed refund claim")
+            amounts = claims.amounts
+            if claims.paid_claim and (not amounts or ledger_amount <= 0):
                 return EvaluationReason(value=False, reason="reply claims payment without a matching positive ledger amount")
             if amounts and any(amount != ledger_amount for amount in amounts):
                 return EvaluationReason(
