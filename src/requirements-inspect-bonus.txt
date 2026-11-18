@@ -1,0 +1,2 @@
+# Optional Lab 9 bonus dependency; install alongside requirements.txt and requirements-lab9.txt.
+inspect-ai==0.3.291
