@@ -29,10 +29,15 @@ def calibrate(path: Path) -> dict:
         k = float("nan")
     cm = stats.confusion(human, judge)
     spec = cm["tn"] / (cm["tn"] + cm["fp"]) if cm["tn"] + cm["fp"] else 0.0
-    obs = (cm["tp"] + cm["fp"]) / len(rows)
+    obs = (cm["tp"] + cm["fp"]) / len(rows) if rows else 0.0
+    try:
+        corrected = stats.rogan_gladen(obs, r, spec)
+    except ValueError:
+        # A no-signal judge can make the correction undefined; calibration still fails its floors.
+        corrected = float("nan")
     res = {"n": len(rows), "precision": round(p, 3), "recall": round(r, 3), "kappa": round(k, 3),
            "confusion": cm, "observed_fail_rate": round(obs, 3),
-           "corrected_fail_rate": round(stats.rogan_gladen(obs, r, spec), 3),
+           "corrected_fail_rate": round(corrected, 3),
            "disagreements": [x for x, h, j in zip(rows, human, judge) if h != j]}
     res["passed"] = all(res[m] >= f for m, f in FLOORS.items())   # nan compares False -> fails
     return res
