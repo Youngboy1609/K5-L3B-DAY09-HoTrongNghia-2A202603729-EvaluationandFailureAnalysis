@@ -35,7 +35,37 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
 
 
 def sha12(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()[:12]
+    # Hash canonical text so Windows checkout autocrlf settings do not change the ID.
+    canonical = path.read_text(encoding="utf-8").replace("\r\n", "\n").replace("\r", "\n")
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:12]
+
+
+def write_text_lf(path: Path, text: str) -> None:
+    """Write generated text with explicit LF endings on every platform."""
+    with path.open("w", encoding="utf-8", newline="\n") as f:
+        f.write(text)
+
+
+# Tags describe a challenge the case exercises, including a safety invariant shared by all
+# public claims. A tag is not a claim that every shape failed on this item.
+V1_FAILURE_MODES = {
+    "C-001": ["FM-01", "FM-07"], "C-002": ["FM-01", "FM-03"],
+    "C-003": ["FM-01"], "C-004": ["FM-01"], "C-005": ["FM-01"],
+    "C-006": ["FM-01", "FM-06"], "C-007": ["FM-01", "FM-02"],
+    "C-008": ["FM-01", "FM-08"], "C-009": ["FM-01"],
+    "C-010": ["FM-01", "FM-07"], "C-011": ["FM-01", "FM-07"],
+    "C-012": ["FM-01", "FM-07"], "C-013": ["FM-01", "FM-05"],
+    "C-014": ["FM-01", "FM-04", "FM-05"],
+}
+V1_TRACE_PROVENANCE = {
+    "C-001": "leaky_trace C-001@11 event 1; sibling_refund C-001@11 event 4",
+    "C-002": "seeded_regression C-002@11 event 3",
+    "C-006": "stale_clause C-006@11 events 3-4",
+    "C-007": "seeded_regression C-007@11 event 5",
+    "C-008": "misreport C-008@11 event 4",
+    "C-013": "seeded_regression C-013@11 event 5",
+    "C-014": "sum_parts C-014@11 event 4; pre_deducted C-014@11 events 4-5",
+}
 
 
 def build(source: Path = SOURCE) -> tuple[int, int]:
@@ -43,21 +73,22 @@ def build(source: Path = SOURCE) -> tuple[int, int]:
     items, labels = [], {}
     for n, claim in enumerate(claims, start=1):
         item_id = f"E-{n:03d}"
+        modes = V1_FAILURE_MODES.get(claim["claim_id"], [])
         items.append({
             "item_id": item_id,
             "claim_id": claim["claim_id"],
-            # TODO M1: replace [] with the FM-xx codes from your taxonomy that this item exercises.
-            "failure_modes": [],
+            "failure_modes": modes,
             "provenance": {"source": "lab8_public", "matrix_id": claim.get("matrix_id"),
-                           "from_trace": None, "generator": None,
-                           "label_by": "lab8_matrix", "checked_by": None},
+                           "from_trace": V1_TRACE_PROVENANCE.get(claim["claim_id"]),
+                           "generator": "manual taxonomy mapping from public claim and trace context",
+                           "label_by": "lab8_matrix", "checked_by": "manual_taxonomy_review"},
             "split": "regression",
             "eval_set_version": VERSION,
         })
         labels[claim["claim_id"]] = claim["expected"]
     ITEMS.parent.mkdir(parents=True, exist_ok=True)
-    ITEMS.write_text("".join(json.dumps(i, ensure_ascii=False) + "\n" for i in items), encoding="utf-8")
-    LABELS.write_text(json.dumps(labels, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_text_lf(ITEMS, "".join(json.dumps(i, ensure_ascii=False) + "\n" for i in items))
+    write_text_lf(LABELS, json.dumps(labels, ensure_ascii=False, indent=2) + "\n")
     return len(items), len(labels)
 
 
@@ -98,8 +129,8 @@ def build_v2(items_v1: Path = ITEMS, labels_v1: Path = LABELS, pack: Path = PACK
             "slices": slices_for(claim["expected"], True),
         })
         labels[claim["claim_id"]] = claim["expected"]
-    ITEMS_V2.write_text("".join(json.dumps(i, ensure_ascii=False) + "\n" for i in items), encoding="utf-8")
-    LABELS_V2.write_text(json.dumps(labels, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_text_lf(ITEMS_V2, "".join(json.dumps(i, ensure_ascii=False) + "\n" for i in items))
+    write_text_lf(LABELS_V2, json.dumps(labels, ensure_ascii=False, indent=2) + "\n")
     return len(items), len(labels)
 
 
